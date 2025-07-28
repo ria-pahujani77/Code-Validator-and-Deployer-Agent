@@ -7,18 +7,28 @@ st.set_page_config(layout="wide", page_title="GitHub Repo Code Validator & Viewe
 
 st.title("Code-Validator-and-Deployer-Agent: GitHub Repo Viewer")
 st.markdown("""
-This app fetches and displays the commit history and **core code differences** (additions in green, deletions in red) for a given **public** GitHub repository.
-
-**Note on Jupyter Notebooks (.ipynb):**
-Due to their JSON structure, Git diffs for notebooks can be verbose. This app attempts to filter out some of the JSON noise to show only the relevant code changes. For a truly rich and accurate notebook diff, consider using tools like `nbdime` locally.
+This app fetches and displays the commit history and **core code differences** (additions in green, deletions in red) for a given GitHub repository.
+It uses a GitHub Personal Access Token (PAT) for higher API rate limits, securely loaded via `st.secrets`.
 """)
 
 # Input fields
 project_name = st.text_input("Project Name (Optional)", "My ML Classification Project")
 github_repo_url = st.text_input(
     "Enter GitHub Repo URL",
-    "https://github.com/ria-pahujani77/Code-Validator-and-Deployer-Agent" # Replace with your actual public repo URL
+    "https://github.com/ria-pahujani77/Code-Validator-and-Deployer-Agent" # Replace with your actual public or private repo URL
 )
+
+# --- Access GitHub Token from Streamlit secrets ---
+# This is the correct and secure way to load your PAT.
+# Ensure you have a .streamlit/secrets.toml file with GITHUB_TOKEN = "your_pat_here"
+github_token = st.secrets.get("GITHUB_TOKEN")
+
+if not github_token:
+    st.error("GitHub Token not found in Streamlit secrets. "
+             "API rate limits will be very low, and access to private repositories will fail. "
+             "Please add `GITHUB_TOKEN = \"your_pat_here\"` to your `.streamlit/secrets.toml` file.")
+    st.stop() # Stop the app if no token is provided, as it won't function reliably
+
 
 submit_button = st.button("Fetch Repo Details")
 
@@ -34,27 +44,26 @@ def get_repo_info(url):
         return match.groups()
     return None
 
-def fetch_commits(owner, repo_name):
-    """
-    Fetches commit history for a given public repository.
-    No token needed.
-    """
+def fetch_commits(owner, repo_name, token):
+    """Fetches commit history for a given repository using a token."""
+    headers = {"Authorization": f"token {token}"}
+    
     api_url = f"https://api.github.com/repos/{owner}/{repo_name}/commits"
     
     try:
-        response = requests.get(api_url)
+        response = requests.get(api_url, headers=headers)
         response.raise_for_status() # Raise an exception for HTTP errors
         return response.json()
     except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching commits: {e}. Check URL or GitHub API rate limits.")
+        st.error(f"Error fetching commits: {e}. Check URL or GitHub Token permissions.")
         return None
 
-def fetch_commit_diff(owner, repo_name, sha):
-    """
-    Fetches the diff for a specific commit SHA for a public repository.
-    No token needed.
-    """
-    headers = {"Accept": "application/vnd.github.v3.diff"} # Request diff format
+def fetch_commit_diff(owner, repo_name, sha, token):
+    """Fetches the diff for a specific commit SHA using a token."""
+    headers = {
+        "Accept": "application/vnd.github.v3.diff", # Request diff format
+        "Authorization": f"token {token}"
+    }
 
     api_url = f"https://api.github.com/repos/{owner}/{repo_name}/commits/{sha}"
     
@@ -63,7 +72,7 @@ def fetch_commit_diff(owner, repo_name, sha):
         response.raise_for_status()
         return response.text # Diff comes as plain text
     except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching diff for commit {sha}: {e}. Check URL or GitHub API rate limits.")
+        st.error(f"Error fetching diff for commit {sha}: {e}. Check GitHub Token permissions.")
         return None
 
 def format_diff_for_streamlit(diff_text):
@@ -72,48 +81,35 @@ def format_diff_for_streamlit(diff_text):
     showing only added/deleted lines, with improved filtering for .ipynb JSON.
     """
     formatted_lines = []
-    # Flag to indicate if we are inside a code block (after '@@')
     in_hunk = False 
-    # Flag to indicate if the current file is a Jupyter Notebook
     is_ipynb = False
 
     for line in diff_text.splitlines():
         if line.startswith('diff --git'):
-            # New file diff header
             formatted_lines.append(f"\n\033[1m{line}\033[0m") # Bold for file header
-            in_hunk = False # Reset for new file
-            is_ipynb = '.ipynb' in line # Check if it's a notebook
+            in_hunk = False 
+            is_ipynb = '.ipynb' in line 
         elif line.startswith('--- a/') or line.startswith('+++ b/'):
-            # Ignore these file path headers
             continue
         elif line.startswith('@@'):
-            # This marks the start of a hunk (code block)
             in_hunk = True
             continue 
         elif in_hunk:
-            # For .ipynb files, try to extract the actual code from the JSON string
             if is_ipynb:
-                # Regex to extract content inside quotes, handling escaped quotes
-                # This is a heuristic and might not catch all complex JSON scenarios
                 match = re.match(r'^[+-]\s*"((?:[^"\\]|\\.)*)\\n",?$', line)
                 if match:
-                    # Decode escaped characters like \\n to actual newlines
                     content = match.group(1).replace('\\n', '\n').replace('\\"', '"')
-                    # Apply color based on original line start
                     if line.startswith('+'):
-                        formatted_lines.append(f"\033[92m+{content}\033[0m") # Green for additions
+                        formatted_lines.append(f"\033[92m+{content}\033[0m") 
                     elif line.startswith('-'):
-                        formatted_lines.append(f"\033[91m-{content}\033[0m") # Red for deletions
-                # If it doesn't match the expected JSON line, or is just context, skip it
-                continue # Always continue to avoid adding raw JSON lines
-            else: # For non-ipynb files, use the previous logic
+                        formatted_lines.append(f"\033[91m-{content}\033[0m") 
+                continue 
+            else: 
                 if line.startswith('+'):
-                    formatted_lines.append(f"\033[92m{line}\033[0m") # Green for additions
+                    formatted_lines.append(f"\033[92m{line}\033[0m") 
                 elif line.startswith('-'):
-                    formatted_lines.append(f"\033[91m{line}\033[0m") # Red for deletions
-                # Context lines (starting with space) are still filtered out by default here
+                    formatted_lines.append(f"\033[91m{line}\033[0m") 
         else:
-            # Lines before the first '@@' or other non-code diff lines
             continue
 
     if not formatted_lines:
@@ -135,7 +131,8 @@ if submit_button:
         st.markdown("---")
         st.subheader("Commit History")
 
-        commits = fetch_commits(owner, repo_name) 
+        # Pass the token to the fetch functions
+        commits = fetch_commits(owner, repo_name, github_token) 
         
         if commits:
             for commit in commits:
@@ -150,11 +147,11 @@ if submit_button:
                 st.markdown(f"**Message:** {message}")
 
                 with st.expander(f"View Code Difference for Commit `{sha[:7]}`"):
-                    diff_text = fetch_commit_diff(owner, repo_name, sha)
+                    diff_text = fetch_commit_diff(owner, repo_name, sha, github_token)
                     if diff_text:
                         st.code(format_diff_for_streamlit(diff_text), language='ansi') 
                     else:
-                        st.warning("Could not retrieve diff for this commit. May be due to GitHub API rate limits.")
+                        st.warning("Could not retrieve diff for this commit. Check token permissions or API rate limits.")
                 st.markdown("---")
         else:
             st.warning("No commits found or unable to fetch commit history. Check URL or GitHub API rate limits.")
