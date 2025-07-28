@@ -6,21 +6,19 @@ import re # For parsing diff output
 st.set_page_config(layout="wide", page_title="GitHub Repo Code Validator & Viewer")
 
 st.title("Code-Validator-and-Deployer-Agent: GitHub Repo Viewer")
-st.markdown("""
-This app fetches and displays the commit history and **core code differences** (additions in green, deletions in red) for a given GitHub repository.
-It uses a GitHub Personal Access Token (PAT) for higher API rate limits, securely loaded via `st.secrets`.
-""")
+# st.markdown("""
+# This app fetches and displays the commit history and **core code differences** (additions in green, deletions in red) for a given GitHub repository.
+# It uses a GitHub Personal Access Token (PAT) for higher API rate limits, securely loaded via `st.secrets`.
+# """)
 
 # Input fields
 project_name = st.text_input("Project Name (Optional)", "My ML Classification Project")
 github_repo_url = st.text_input(
     "Enter GitHub Repo URL",
-    "https://github.com/ria-pahujani77/Code-Validator-and-Deployer-Agent" # Replace with your actual public or private repo URL
+    "" # Removed the static GitHub URL, now it's an empty input field
 )
 
-# --- Access GitHub Token from Streamlit secrets ---
-# This is the correct and secure way to load your PAT.
-# Ensure you have a .streamlit/secrets.toml file with GITHUB_TOKEN = "your_pat_here"
+
 github_token = st.secrets.get("GITHUB_TOKEN")
 
 if not github_token:
@@ -41,7 +39,13 @@ def get_repo_info(url):
     """
     match = re.match(r"https://github.com/([^/]+)/([^/]+)(?:\.git)?", url)
     if match:
-        return match.groups()
+        owner, repo_name_candidate = match.groups()
+        # Explicitly strip .git suffix if present in the candidate name
+        if repo_name_candidate.endswith('.git'):
+            repo_name = repo_name_candidate[:-4]
+        else:
+            repo_name = repo_name_candidate
+        return owner, repo_name
     return None
 
 def fetch_commits(owner, repo_name, token):
