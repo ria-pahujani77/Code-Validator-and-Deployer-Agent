@@ -7,7 +7,10 @@ st.set_page_config(layout="wide", page_title="GitHub Repo Code Validator & Viewe
 
 st.title("Code-Validator-and-Deployer-Agent: GitHub Repo Viewer")
 st.markdown("""
-This app fetches and displays the commit history and **only the core code differences** (additions in green, deletions in red) for a given **public** GitHub repository.
+This app fetches and displays the commit history and **core code differences** (additions in green, deletions in red) for a given **public** GitHub repository.
+
+**Note on Jupyter Notebooks (.ipynb):**
+Due to their JSON structure, Git diffs for notebooks can be verbose. This app attempts to filter out some of the JSON noise to show only the relevant code changes. For a truly rich and accurate notebook diff, consider using tools like `nbdime` locally.
 """)
 
 # Input fields
@@ -16,9 +19,6 @@ github_repo_url = st.text_input(
     "Enter GitHub Repo URL",
     "https://github.com/ria-pahujani77/Code-Validator-and-Deployer-Agent" # Replace with your actual public repo URL
 )
-
-# No GitHub Token needed for public repositories
-# The previous warning about missing token is also removed.
 
 submit_button = st.button("Fetch Repo Details")
 
@@ -69,30 +69,55 @@ def fetch_commit_diff(owner, repo_name, sha):
 def format_diff_for_streamlit(diff_text):
     """
     Formats raw Git diff text with Streamlit-compatible coloring,
-    showing only added/deleted lines.
+    showing only added/deleted lines, with improved filtering for .ipynb JSON.
     """
     formatted_lines = []
-    in_code_block = False 
+    # Flag to indicate if we are inside a code block (after '@@')
+    in_hunk = False 
+    # Flag to indicate if the current file is a Jupyter Notebook
+    is_ipynb = False
 
     for line in diff_text.splitlines():
         if line.startswith('diff --git'):
+            # New file diff header
             formatted_lines.append(f"\n\033[1m{line}\033[0m") # Bold for file header
-            in_code_block = False # Reset for new file
+            in_hunk = False # Reset for new file
+            is_ipynb = '.ipynb' in line # Check if it's a notebook
         elif line.startswith('--- a/') or line.startswith('+++ b/'):
+            # Ignore these file path headers
             continue
         elif line.startswith('@@'):
-            in_code_block = True
+            # This marks the start of a hunk (code block)
+            in_hunk = True
             continue 
-        elif in_code_block:
-            if line.startswith('+'):
-                formatted_lines.append(f"\033[92m{line}\033[0m") # Green for additions
-            elif line.startswith('-'):
-                formatted_lines.append(f"\033[91m{line}\033[0m") # Red for deletions
+        elif in_hunk:
+            # For .ipynb files, try to extract the actual code from the JSON string
+            if is_ipynb:
+                # Regex to extract content inside quotes, handling escaped quotes
+                # This is a heuristic and might not catch all complex JSON scenarios
+                match = re.match(r'^[+-]\s*"((?:[^"\\]|\\.)*)\\n",?$', line)
+                if match:
+                    # Decode escaped characters like \\n to actual newlines
+                    content = match.group(1).replace('\\n', '\n').replace('\\"', '"')
+                    # Apply color based on original line start
+                    if line.startswith('+'):
+                        formatted_lines.append(f"\033[92m+{content}\033[0m") # Green for additions
+                    elif line.startswith('-'):
+                        formatted_lines.append(f"\033[91m-{content}\033[0m") # Red for deletions
+                # If it doesn't match the expected JSON line, or is just context, skip it
+                continue # Always continue to avoid adding raw JSON lines
+            else: # For non-ipynb files, use the previous logic
+                if line.startswith('+'):
+                    formatted_lines.append(f"\033[92m{line}\033[0m") # Green for additions
+                elif line.startswith('-'):
+                    formatted_lines.append(f"\033[91m{line}\033[0m") # Red for deletions
+                # Context lines (starting with space) are still filtered out by default here
         else:
+            # Lines before the first '@@' or other non-code diff lines
             continue
 
     if not formatted_lines:
-        return "No significant code changes (only metadata or context lines)."
+        return "No significant code changes detected (only metadata or context lines filtered out)."
         
     return "\n".join(formatted_lines)
 
@@ -110,7 +135,6 @@ if submit_button:
         st.markdown("---")
         st.subheader("Commit History")
 
-        # Call fetch functions without a token
         commits = fetch_commits(owner, repo_name) 
         
         if commits:
