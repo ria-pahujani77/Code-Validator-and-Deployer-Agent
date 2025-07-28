@@ -5,18 +5,17 @@ import re # For parsing diff output
 # --- Streamlit UI Setup ---
 st.set_page_config(layout="wide", page_title="GitHub Repo Code Validator & Viewer")
 
-st.title("Code-Validator-and-Deployer-Agent: GitHub Repo Viewer")
+st.title("Code-Validator-and-Deployer-Agent")
 # st.markdown("""
 # This app fetches and displays the commit history and **core code differences** (additions in green, deletions in red) for a given GitHub repository.
 # The code differences are now shown directly for each commit, without needing to expand.
 # It uses a GitHub Personal Access Token (PAT) for higher API rate limits, securely loaded via `st.secrets`.
 
 # **Note on Jupyter Notebooks (.ipynb):**
-# Due to their JSON structure, Git diffs for notebooks can be verbose. This app attempts to filter out some of the JSON noise to show only the relevant code changes. For a truly rich and accurate notebook diff, consider using tools like `nbdime` locally.
+# Due to their JSON structure, Git diffs for notebooks can be verbose. This app attempts to filter out some of the JSON noise to show only the relevant code changes, and now ensures colors are applied to all detected additions/deletions. For a truly rich and accurate notebook diff, consider using tools like `nbdime` locally.
 # """)
 
 # Input fields
-project_name = st.text_input("Project Name (Optional)", "My ML Classification Project")
 github_repo_url = st.text_input(
     "Enter GitHub Repo URL",
     "" # Empty input field for user to type/paste
@@ -87,7 +86,7 @@ def fetch_commit_diff(owner, repo_name, sha, token):
 
 def format_diff_for_streamlit(diff_text):
     """
-    Formats raw Git diff text with Streamlit-compatible coloring,
+    Formats raw Git diff text with HTML-based coloring (red for deletions, green for additions),
     showing only added/deleted lines, with improved filtering for .ipynb JSON.
     """
     formatted_lines = []
@@ -96,7 +95,8 @@ def format_diff_for_streamlit(diff_text):
 
     for line in diff_text.splitlines():
         if line.startswith('diff --git'):
-            formatted_lines.append(f"\n\033[1m{line}\033[0m") # Bold for file header
+            # New file diff header - use monospace for consistency with code
+            formatted_lines.append(f"<pre style='color: white; background-color: #333; padding: 5px; border-radius: 5px; font-weight: bold;'>{line}</pre>")
             in_hunk = False 
             is_ipynb = '.ipynb' in line 
         elif line.startswith('--- a/') or line.startswith('+++ b/'):
@@ -105,25 +105,32 @@ def format_diff_for_streamlit(diff_text):
             in_hunk = True
             continue 
         elif in_hunk:
-            if is_ipynb:
-                # Regex to extract content inside quotes, handling escaped quotes
-                # This is a heuristic and might not catch all complex JSON scenarios
-                # It specifically looks for lines that are part of the "source" array in .ipynb JSON
-                match = re.match(r'^[+-]\s*"((?:[^"\\]|\\.)*)\\n",?$', line)
-                if match:
-                    content = match.group(1).replace('\\n', '\n').replace('\\"', '"')
-                    if line.startswith('+'):
-                        formatted_lines.append(f"\033[92m+{content}\033[0m") # Green for additions
-                    elif line.startswith('-'):
-                        formatted_lines.append(f"\033[91m-{content}\033[0m") # Red for deletions
-                # If it doesn't match the expected JSON line, or is just context/metadata, skip it
-                continue 
-            else: # For non-ipynb files, use the standard diff lines
-                if line.startswith('+'):
-                    formatted_lines.append(f"\033[92m{line}\033[0m") # Green for additions
-                elif line.startswith('-'):
-                    formatted_lines.append(f"\033[91m{line}\033[0m") # Red for deletions
-                # Context lines (starting with space) are still filtered out by default here
+            # Check if the line is an addition or deletion
+            if line.startswith('+'):
+                html_color = "#008000" # Darker Green
+                # For ipynb, try to extract content from JSON string
+                if is_ipynb:
+                    match = re.match(r'^\+\s*"((?:[^"\\]|\\.)*)\\n",?$', line)
+                    if match:
+                        content = match.group(1).replace('\\n', '\n').replace('\\"', '"')
+                        formatted_lines.append(f"<span style='color:{html_color};'>+{content}</span>")
+                    else:
+                        formatted_lines.append(f"<span style='color:{html_color};'>{line}</span>")
+                else:
+                    formatted_lines.append(f"<span style='color:{html_color};'>{line}</span>")
+            elif line.startswith('-'):
+                html_color = "#FF0000" # Red
+                # For ipynb, try to extract content from JSON string
+                if is_ipynb:
+                    match = re.match(r'^\-\s*"((?:[^"\\]|\\.)*)\\n",?$', line)
+                    if match:
+                        content = match.group(1).replace('\\n', '\n').replace('\\"', '"')
+                        formatted_lines.append(f"<span style='color:{html_color};'>-{content}</span>")
+                    else:
+                        formatted_lines.append(f"<span style='color:{html_color};'>{line}</span>")
+                else:
+                    formatted_lines.append(f"<span style='color:{html_color};'>{line}</span>")
+            # Context lines (starting with space) are still filtered out
         else:
             # Lines before the first '@@' or other non-code diff lines are skipped
             continue
@@ -131,7 +138,10 @@ def format_diff_for_streamlit(diff_text):
     if not formatted_lines:
         return "No significant code changes detected (only metadata or context lines filtered out)."
         
-    return "\n".join(formatted_lines)
+    # Join lines and wrap in a <pre> tag for monospace font and consistent spacing
+    # Use a dark background for the entire diff block for better contrast
+    return f"<pre style='background-color: #262626; padding: 10px; border-radius: 8px; overflow-x: auto;'>{'<br>'.join(formatted_lines)}</pre>"
+
 
 # --- Main Logic ---
 if submit_button:
@@ -147,7 +157,7 @@ if submit_button:
     else:
         owner, repo_name = repo_info
         st.subheader(f"Repository: {owner}/{repo_name}")
-        st.write(f"Project Name: {project_name}")
+        # st.write(f"Project Name: {project_name}") # Project name is commented out in your provided code
 
         st.markdown("---")
         st.subheader("Commit History")
@@ -170,7 +180,8 @@ if submit_button:
                 st.markdown(f"**Code Difference for Commit `{sha[:7]}`:**")
                 diff_text = fetch_commit_diff(owner, repo_name, sha, github_token)
                 if diff_text:
-                    st.code(format_diff_for_streamlit(diff_text), language='ansi') 
+                    # Use st.markdown with unsafe_allow_html=True for HTML rendering
+                    st.markdown(format_diff_for_streamlit(diff_text), unsafe_allow_html=True) 
                 else:
                     st.warning("Could not retrieve diff for this commit. Check token permissions or API rate limits.")
                 st.markdown("---") # Separator between commits
