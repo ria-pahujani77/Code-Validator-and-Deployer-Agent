@@ -7,25 +7,18 @@ st.set_page_config(layout="wide", page_title="GitHub Repo Code Validator & Viewe
 
 st.title("Code-Validator-and-Deployer-Agent: GitHub Repo Viewer")
 st.markdown("""
-This app fetches and displays the commit history and **only the core code differences** (additions in green, deletions in red) for a given GitHub repository.
-It supports **private repositories** using a GitHub Personal Access Token (PAT).
+This app fetches and displays the commit history and **only the core code differences** (additions in green, deletions in red) for a given **public** GitHub repository.
 """)
 
 # Input fields
 project_name = st.text_input("Project Name (Optional)", "My ML Classification Project")
 github_repo_url = st.text_input(
     "Enter GitHub Repo URL",
-    "https://github.com/ria-pahujani77/Code-Validator-and-Deployer-Agent" # Replace with your actual repo URL
+    "https://github.com/ria-pahujani77/Code-Validator-and-Deployer-Agent" # Replace with your actual public repo URL
 )
 
-# Access GitHub Token from Streamlit secrets
-# Ensure you have a .streamlit/secrets.toml file with GITHUB_TOKEN = "your_pat_here"
-github_token = st.secrets.get("GITHUB_TOKEN")
-
-if not github_token:
-    st.warning("GitHub Token not found in Streamlit secrets. "
-               "Access to private repositories will fail. "
-               "Please add GITHUB_TOKEN to your `.streamlit/secrets.toml` file.")
+# No GitHub Token needed for public repositories
+# The previous warning about missing token is also removed.
 
 submit_button = st.button("Fetch Repo Details")
 
@@ -41,27 +34,27 @@ def get_repo_info(url):
         return match.groups()
     return None
 
-def fetch_commits(owner, repo_name, token=None):
-    """Fetches commit history for a given repository."""
-    headers = {}
-    if token:
-        headers["Authorization"] = f"token {token}" # Use 'token' for PAT
-    
+def fetch_commits(owner, repo_name):
+    """
+    Fetches commit history for a given public repository.
+    No token needed.
+    """
     api_url = f"https://api.github.com/repos/{owner}/{repo_name}/commits"
     
     try:
-        response = requests.get(api_url, headers=headers)
+        response = requests.get(api_url)
         response.raise_for_status() # Raise an exception for HTTP errors
         return response.json()
     except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching commits: {e}. Check URL and GitHub Token/permissions.")
+        st.error(f"Error fetching commits: {e}. Check URL or GitHub API rate limits.")
         return None
 
-def fetch_commit_diff(owner, repo_name, sha, token=None):
-    """Fetches the diff for a specific commit SHA."""
+def fetch_commit_diff(owner, repo_name, sha):
+    """
+    Fetches the diff for a specific commit SHA for a public repository.
+    No token needed.
+    """
     headers = {"Accept": "application/vnd.github.v3.diff"} # Request diff format
-    if token:
-        headers["Authorization"] = f"token {token}"
 
     api_url = f"https://api.github.com/repos/{owner}/{repo_name}/commits/{sha}"
     
@@ -70,7 +63,7 @@ def fetch_commit_diff(owner, repo_name, sha, token=None):
         response.raise_for_status()
         return response.text # Diff comes as plain text
     except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching diff for commit {sha}: {e}. Check GitHub Token/permissions.")
+        st.error(f"Error fetching diff for commit {sha}: {e}. Check URL or GitHub API rate limits.")
         return None
 
 def format_diff_for_streamlit(diff_text):
@@ -79,32 +72,23 @@ def format_diff_for_streamlit(diff_text):
     showing only added/deleted lines.
     """
     formatted_lines = []
-    # Use a flag to indicate if we are inside a code block (after '@@')
     in_code_block = False 
 
     for line in diff_text.splitlines():
         if line.startswith('diff --git'):
-            # This is a new file diff header, include it as a separator
             formatted_lines.append(f"\n\033[1m{line}\033[0m") # Bold for file header
             in_code_block = False # Reset for new file
         elif line.startswith('--- a/') or line.startswith('+++ b/'):
-            # Ignore these file path headers
             continue
         elif line.startswith('@@'):
-            # This marks the start of a hunk (code block)
             in_code_block = True
-            # Optionally, you can include the @@ line for context, or skip it
-            # formatted_lines.append(f"\033[36m{line}\033[0m") # Cyan for @@ lines
-            continue # Skip the @@ line itself for a cleaner output
+            continue 
         elif in_code_block:
             if line.startswith('+'):
                 formatted_lines.append(f"\033[92m{line}\033[0m") # Green for additions
             elif line.startswith('-'):
                 formatted_lines.append(f"\033[91m{line}\033[0m") # Red for deletions
-            # else: # This is a context line, we are explicitly excluding these
-            #     formatted_lines.append(line) 
         else:
-            # Lines before the first '@@' or other non-code diff lines
             continue
 
     if not formatted_lines:
@@ -126,7 +110,8 @@ if submit_button:
         st.markdown("---")
         st.subheader("Commit History")
 
-        commits = fetch_commits(owner, repo_name, github_token) 
+        # Call fetch functions without a token
+        commits = fetch_commits(owner, repo_name) 
         
         if commits:
             for commit in commits:
@@ -140,15 +125,13 @@ if submit_button:
                 st.markdown(f"**Date:** {date}")
                 st.markdown(f"**Message:** {message}")
 
-                # Fetch and display diff for each commit
                 with st.expander(f"View Code Difference for Commit `{sha[:7]}`"):
-                    diff_text = fetch_commit_diff(owner, repo_name, sha, github_token)
+                    diff_text = fetch_commit_diff(owner, repo_name, sha)
                     if diff_text:
-                        # Use 'ansi' language for st.code to render colors
                         st.code(format_diff_for_streamlit(diff_text), language='ansi') 
                     else:
-                        st.warning("Could not retrieve diff for this commit. Check token permissions or rate limits.")
+                        st.warning("Could not retrieve diff for this commit. May be due to GitHub API rate limits.")
                 st.markdown("---")
         else:
-            st.warning("No commits found or unable to fetch commit history. Check URL and token permissions.")
+            st.warning("No commits found or unable to fetch commit history. Check URL or GitHub API rate limits.")
 
